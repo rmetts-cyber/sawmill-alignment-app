@@ -1,0 +1,1 @@
+This app creates clean alignment reports for sawmill machinery. You pick the machine, enter the measurement numbers, and upload photos of the equipment and company logo. It automatically turns the numbers green if they pass tolerance or red if they fail. Once you're done, it builds a single PDF report with your photos and measurements that you can download with one click.
