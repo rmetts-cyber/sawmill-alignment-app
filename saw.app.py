@@ -191,13 +191,13 @@ st.header("Job Details")
 mc1, mc2, mc3 = st.columns(3)
 
 with mc1:
-    report_for = st.text_input("Report for", placeholder="enter company name")
+    report_for = st.text_input("Report for", placeholder="Enter company name")
 
 with mc2:
-    report_by = st.text_input("Report by", placeholder="enter your name")
+    report_by = st.text_input("Report by", placeholder="Enter your name")
 
 with mc3:
-    equipment_num = st.text_input("Equipment #", placeholder="enter equipment number")
+    equipment_num = st.text_input("Equipment #", placeholder="Enter equipment number")
 
 st.markdown("---")
 
