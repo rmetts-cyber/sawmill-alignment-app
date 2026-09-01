@@ -6,7 +6,6 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.pdfgen import canvas
 
 DEFAULT_EQUIPMENT = {
     "Band Mill Carriage Track": [
@@ -174,25 +173,31 @@ if app_mode == "Merge PDF Reports":
     if uploaded_pdfs and len(uploaded_pdfs) >= 2:
         if st.button("🔗 Merge Selected PDF Reports"):
             try:
-                from reportlab.pdfgen import canvas
-                from reportlab.lib.pagesizes import letter
-                import fitz  # PyMuPDF fallback or simple byte concatenation
-                
-                merged_buffer = io.BytesIO()
-                # Simple byte append / multi-page document container
-                writer_bytes = bytearray()
-                for pdf_file in uploaded_pdfs:
-                    writer_bytes.extend(pdf_file.read())
-                
+                try:
+                    import fitz  # PyMuPDF
+                    merged_doc = fitz.open()
+                    for uploaded_pdf in uploaded_pdfs:
+                        doc = fitz.open(stream=uploaded_pdf.read(), filetype="pdf")
+                        merged_doc.insert_pdf(doc)
+                    merged_bytes = merged_doc.tobytes()
+                except ImportError:
+                    from pypdf import PdfWriter
+                    writer = PdfWriter()
+                    for uploaded_pdf in uploaded_pdfs:
+                        writer.append(uploaded_pdf)
+                    merged_buffer = io.BytesIO()
+                    writer.write(merged_buffer)
+                    merged_bytes = merged_buffer.getvalue()
+
                 st.success("PDFs successfully merged!")
                 st.download_button(
                     label="📄 Download Merged Master Report PDF",
-                    data=bytes(writer_bytes),
+                    data=merged_bytes,
                     file_name="master_sawmill_alignment_report.pdf",
                     mime="application/pdf"
                 )
             except Exception as e:
-                st.info("Uploaded PDFs are ready for combination.")
+                st.error(f"Error merging PDFs: {e}")
 
 elif app_mode == "Edit Equipment Profiles":
     st.title("⚙️ Equipment Profile Editor")
@@ -296,15 +301,15 @@ else:
                     with c2:
                         after_val = st.number_input("As-Left Reading", value=default_target - 0.002, step=0.001, format="%.3f", key=f"a_{label}")
 
-            input_results.append({
-                "label": label,
-                "target": target_val,
-                "before_val": before_val,
-                "after_val": after_val
-            })
+                input_results.append({
+                    "label": label,
+                    "target": target_val,
+                    "before_val": before_val,
+                    "after_val": after_val
+                })
 
-        notes = st.text_area("Maintenance Notes & Observations", "Routine alignment completed within tolerance specs.")
-        submitted = st.form_submit_button("Generate Report & Evaluate")
+            notes = st.text_area("Maintenance Notes & Observations", "Routine alignment completed within tolerance specs.")
+            submitted = st.form_submit_button("Generate Report & Evaluate")
 
     if submitted:
         st.markdown("---")
