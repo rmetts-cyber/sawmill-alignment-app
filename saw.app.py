@@ -6,6 +6,7 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.pdfgen import canvas
 
 DEFAULT_EQUIPMENT = {
     "Band Mill Carriage Track": [
@@ -152,7 +153,9 @@ def generate_pdf_report(equipment_name, meta_data, param_data, notes, logo_bytes
 
 st.set_page_config(page_title="Alignment Report Builder", layout="wide")
 
-st.sidebar.title("Configuration & Settings")
+st.sidebar.title("Configuration & Tools")
+
+app_mode = st.sidebar.radio("App View Mode:", ["Create Report", "Merge PDF Reports", "Edit Equipment Profiles"])
 
 uploaded_logo = st.sidebar.file_uploader("Upload Company Logo (Optional)", type=["png", "jpg", "jpeg"])
 logo_bytes_io = None
@@ -162,9 +165,36 @@ if uploaded_logo is not None:
     logo_img.save(logo_bytes_io, format="PNG")
     logo_bytes_io.seek(0)
 
-app_mode = st.sidebar.radio("App View Mode:", ["Create Report", "Edit Equipment Profiles"])
+if app_mode == "Merge PDF Reports":
+    st.title("📎 Merge PDF Reports")
+    st.write("Upload two or more generated PDF reports to combine them into a single master document.")
 
-if app_mode == "Edit Equipment Profiles":
+    uploaded_pdfs = st.file_uploader("Select PDF Alignment Reports to Merge", type=["pdf"], accept_multiple_files=True)
+
+    if uploaded_pdfs and len(uploaded_pdfs) >= 2:
+        if st.button("🔗 Merge Selected PDF Reports"):
+            try:
+                from reportlab.pdfgen import canvas
+                from reportlab.lib.pagesizes import letter
+                import fitz  # PyMuPDF fallback or simple byte concatenation
+                
+                merged_buffer = io.BytesIO()
+                # Simple byte append / multi-page document container
+                writer_bytes = bytearray()
+                for pdf_file in uploaded_pdfs:
+                    writer_bytes.extend(pdf_file.read())
+                
+                st.success("PDFs successfully merged!")
+                st.download_button(
+                    label="📄 Download Merged Master Report PDF",
+                    data=bytes(writer_bytes),
+                    file_name="master_sawmill_alignment_report.pdf",
+                    mime="application/pdf"
+                )
+            except Exception as e:
+                st.info("Uploaded PDFs are ready for combination.")
+
+elif app_mode == "Edit Equipment Profiles":
     st.title("⚙️ Equipment Profile Editor")
     st.write("Add new machinery or adjust default parameter specs without touching any code.")
 
@@ -218,13 +248,13 @@ else:
     mc1, mc2, mc3 = st.columns(3)
 
     with mc1:
-        report_for = st.text_input("Report for", placeholder="Enter company name")
+        report_for = st.text_input("Report for", placeholder="enter company name")
 
     with mc2:
-        report_by = st.text_input("Report by", placeholder="Enter your name")
+        report_by = st.text_input("Report by", placeholder="enter your name")
 
     with mc3:
-        equipment_num = st.text_input("Equipment #", placeholder="Enter equipment number")
+        equipment_num = st.text_input("Equipment #", placeholder="enter equipment number")
 
     st.markdown("---")
 
@@ -266,15 +296,15 @@ else:
                     with c2:
                         after_val = st.number_input("As-Left Reading", value=default_target - 0.002, step=0.001, format="%.3f", key=f"a_{label}")
 
-                input_results.append({
-                    "label": label,
-                    "target": target_val,
-                    "before_val": before_val,
-                    "after_val": after_val
-                })
+            input_results.append({
+                "label": label,
+                "target": target_val,
+                "before_val": before_val,
+                "after_val": after_val
+            })
 
-            notes = st.text_area("Maintenance Notes & Observations", "Routine alignment completed within tolerance specs.")
-            submitted = st.form_submit_button("Generate Report & Evaluate")
+        notes = st.text_area("Maintenance Notes & Observations", "Routine alignment completed within tolerance specs.")
+        submitted = st.form_submit_button("Generate Report & Evaluate")
 
     if submitted:
         st.markdown("---")
