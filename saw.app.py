@@ -7,7 +7,7 @@ from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-EQUIPMENT_CONFIGS = {
+DEFAULT_EQUIPMENT = {
     "Band Mill Carriage Track": [
         ("Vee Rail Straightness (Guide Side)", 0.015),
         ("Flat Rail Straightness (Support Side)", 0.015),
@@ -51,6 +51,9 @@ EQUIPMENT_CONFIGS = {
         ("Bottom Chain Bed Levelness", 0.010)
     ]
 }
+
+if "equipment_configs" not in st.session_state:
+    st.session_state["equipment_configs"] = DEFAULT_EQUIPMENT.copy()
 
 def generate_pdf_report(equipment_name, meta_data, param_data, notes, logo_bytes, photo_bytes, include_as_found):
     buffer = io.BytesIO()
@@ -149,7 +152,7 @@ def generate_pdf_report(equipment_name, meta_data, param_data, notes, logo_bytes
 
 st.set_page_config(page_title="Alignment Report Builder", layout="wide")
 
-st.sidebar.title("Configuration & Branding")
+st.sidebar.title("Configuration & Settings")
 
 uploaded_logo = st.sidebar.file_uploader("Upload Company Logo (Optional)", type=["png", "jpg", "jpeg"])
 logo_bytes_io = None
@@ -159,138 +162,183 @@ if uploaded_logo is not None:
     logo_img.save(logo_bytes_io, format="PNG")
     logo_bytes_io.seek(0)
 
-selected_equipment = st.sidebar.selectbox("Select Equipment Type:", list(EQUIPMENT_CONFIGS.keys()))
+app_mode = st.sidebar.radio("App View Mode:", ["Create Report", "Edit Equipment Profiles"])
 
-include_as_found = st.sidebar.checkbox("Include As-Found (Before) Readings", value=True)
+if app_mode == "Edit Equipment Profiles":
+    st.title("⚙️ Equipment Profile Editor")
+    st.write("Add new machinery or adjust default parameter specs without touching any code.")
 
-st.title("Equipment Alignment Report Builder")
-st.markdown(f"Active Machine Profile: **{selected_equipment}**")
+    st.subheader("1. Add New Equipment Type")
+    new_eq_name = st.text_input("New Equipment Name (e.g., 'Trimmer' or 'Debarker')")
+    if st.button("Add New Equipment"):
+        if new_eq_name and new_eq_name not in st.session_state["equipment_configs"]:
+            st.session_state["equipment_configs"][new_eq_name] = [("General Alignment Check", 0.010)]
+            st.success(f"Added '{new_eq_name}' to equipment list!")
+            st.rerun()
 
-st.header("Job Details")
-mc1, mc2, mc3 = st.columns(3)
-
-with mc1:
-    report_for = st.text_input("Report for", placeholder="Enter company name")
-
-with mc2:
-    report_by = st.text_input("Report by", placeholder="Enter your name")
-
-with mc3:
-    equipment_num = st.text_input("Equipment #", placeholder="Enter equipment number")
-
-st.markdown("---")
-
-col1, col2 = st.columns([1, 1], gap="medium")
-
-with col1:
-    st.header("Equipment Photo")
-    uploaded_photo = st.file_uploader("Upload Photo of Equipment (Optional)", type=["jpg", "jpeg", "png"])
-    photo_bytes_io = None
-    if uploaded_photo is not None:
-        photo_img = Image.open(uploaded_photo)
-        st.image(photo_img, caption="Equipment Field Photo", use_container_width=True)
-        photo_bytes_io = io.BytesIO()
-        photo_img.save(photo_bytes_io, format="JPEG")
-        photo_bytes_io.seek(0)
-    else:
-        st.info("No photo uploaded. (Optional)")
-
-with col2:
-    st.header("Measurement Entry")
-    param_list = EQUIPMENT_CONFIGS[selected_equipment]
-    input_results = []
-
-    with st.form("alignment_form"):
-        for label, default_target in param_list:
-            st.subheader(label)
-            c1, c2, c3 = st.columns(3)
-            
-            with c1:
-                target_val = st.number_input("Spec Limit (in)", value=default_target, step=0.001, format="%.3f", key=f"t_{label}")
-            
-            before_val = None
-            if include_as_found:
-                with c2:
-                    before_val = st.number_input("As-Found", value=default_target + 0.005, step=0.001, format="%.3f", key=f"b_{label}")
-                with c3:
-                    after_val = st.number_input("As-Left", value=default_target - 0.002, step=0.001, format="%.3f", key=f"a_{label}")
-            else:
-                with c2:
-                    after_val = st.number_input("As-Left Reading", value=default_target - 0.002, step=0.001, format="%.3f", key=f"a_{label}")
-
-            input_results.append({
-                "label": label,
-                "target": target_val,
-                "before_val": before_val,
-                "after_val": after_val
-            })
-
-        notes = st.text_area("Maintenance Notes & Observations", "Routine alignment completed within tolerance specs.")
-        submitted = st.form_submit_button("Generate Report & Evaluate")
-
-if submitted:
     st.markdown("---")
-    st.header("Tolerance Summary Table")
+    st.subheader("2. Modify Parameters for Existing Equipment")
+    selected_edit_eq = st.selectbox("Select Equipment to Edit:", list(st.session_state["equipment_configs"].keys()))
 
-    all_after_passed = True
-    for item in input_results:
-        item["after_status"] = "PASS" if item["after_val"] <= item["target"] else "FAIL"
-        if item["after_status"] == "FAIL":
-            all_after_passed = False
+    current_params = st.session_state["equipment_configs"][selected_edit_eq]
 
-        if include_as_found and item["before_val"] is not None:
-            item["before_status"] = "PASS" if item["before_val"] <= item["target"] else "FAIL"
+    st.write(f"Editing parameters for **{selected_edit_eq}**:")
+    updated_params = []
+    for i, (param_label, param_target) in enumerate(current_params):
+        p_c1, p_c2 = st.columns([3, 1])
+        with p_c1:
+            new_label = st.text_input(f"Parameter #{i+1} Name", value=param_label, key=f"edit_label_{selected_edit_eq}_{i}")
+        with p_c2:
+            new_target = st.number_input(f"Spec Limit", value=param_target, step=0.001, format="%.3f", key=f"edit_target_{selected_edit_eq}_{i}")
+        updated_params.append((new_label, new_target))
 
-    st.markdown(f"**Report For:** {report_for if report_for else 'N/A'} | **Report By:** {report_by if report_by else 'N/A'} | **Equipment #:** {equipment_num if equipment_num else 'N/A'}")
+    st.session_state["equipment_configs"][selected_edit_eq] = updated_params
+
     st.markdown("<br>", unsafe_allow_html=True)
+    add_p_col1, add_p_col2 = st.columns([3, 1])
+    with add_p_col1:
+        add_param_name = st.text_input("Add New Parameter Name for this machine", key=f"add_p_{selected_edit_eq}")
+    with add_p_col2:
+        add_param_target = st.number_input("Spec Limit", value=0.010, step=0.001, format="%.3f", key=f"add_t_{selected_edit_eq}")
 
-    table_html = "<table style='width:100%; border-collapse:collapse; text-align:center; font-family:sans-serif;'>"
-    table_html += "<tr style='background-color:#1A365D; color:white;'><th style='padding:10px; text-align:left;'>Parameter</th><th style='padding:10px;'>Spec Limit</th>"
-    if include_as_found:
-        table_html += "<th style='padding:10px;'>As-Found</th><th style='padding:10px;'>As-Found Status</th>"
-    table_html += "<th style='padding:10px;'>As-Left</th><th style='padding:10px;'>As-Left Status</th></tr>"
+    if st.button("Add Parameter to Machine"):
+        if add_param_name:
+            st.session_state["equipment_configs"][selected_edit_eq].append((add_param_name, add_param_target))
+            st.success(f"Added '{add_param_name}'!")
+            st.rerun()
 
-    for item in input_results:
-        after_bg = "#DCFCE7" if item["after_status"] == "PASS" else "#FEE2E2"
-        after_fg = "#166534" if item["after_status"] == "PASS" else "#991B1B"
-        
-        table_html += f"<tr style='border-bottom:1px solid #e2e8f0;'><td style='padding:10px; text-align:left;'><b>{item['label']}</b></td><td style='padding:10px;'>≤ {item['target']:.3f}\"</td>"
-        
+else:
+    selected_equipment = st.sidebar.selectbox("Select Equipment Type:", list(st.session_state["equipment_configs"].keys()))
+    include_as_found = st.sidebar.checkbox("Include As-Found (Before) Readings", value=True)
+
+    st.title("Equipment Alignment Report Builder")
+    st.markdown(f"Active Machine Profile: **{selected_equipment}**")
+
+    st.header("Job Details")
+    mc1, mc2, mc3 = st.columns(3)
+
+    with mc1:
+        report_for = st.text_input("Report for", placeholder="enter company name")
+
+    with mc2:
+        report_by = st.text_input("Report by", placeholder="enter your name")
+
+    with mc3:
+        equipment_num = st.text_input("Equipment #", placeholder="enter equipment number")
+
+    st.markdown("---")
+
+    col1, col2 = st.columns([1, 1], gap="medium")
+
+    with col1:
+        st.header("Equipment Photo")
+        uploaded_photo = st.file_uploader("Upload Photo of Equipment (Optional)", type=["jpg", "jpeg", "png"])
+        photo_bytes_io = None
+        if uploaded_photo is not None:
+            photo_img = Image.open(uploaded_photo)
+            st.image(photo_img, caption="Equipment Field Photo", use_container_width=True)
+            photo_bytes_io = io.BytesIO()
+            photo_img.save(photo_bytes_io, format="JPEG")
+            photo_bytes_io.seek(0)
+        else:
+            st.info("No photo uploaded. (Optional)")
+
+    with col2:
+        st.header("Measurement Entry")
+        param_list = st.session_state["equipment_configs"][selected_equipment]
+        input_results = []
+
+        with st.form("alignment_form"):
+            for label, default_target in param_list:
+                st.subheader(label)
+                c1, c2, c3 = st.columns(3)
+                
+                with c1:
+                    target_val = st.number_input("Spec Limit (in)", value=default_target, step=0.001, format="%.3f", key=f"t_{label}")
+                
+                before_val = None
+                if include_as_found:
+                    with c2:
+                        before_val = st.number_input("As-Found", value=default_target + 0.005, step=0.001, format="%.3f", key=f"b_{label}")
+                    with c3:
+                        after_val = st.number_input("As-Left", value=default_target - 0.002, step=0.001, format="%.3f", key=f"a_{label}")
+                else:
+                    with c2:
+                        after_val = st.number_input("As-Left Reading", value=default_target - 0.002, step=0.001, format="%.3f", key=f"a_{label}")
+
+                input_results.append({
+                    "label": label,
+                    "target": target_val,
+                    "before_val": before_val,
+                    "after_val": after_val
+                })
+
+            notes = st.text_area("Maintenance Notes & Observations", "Routine alignment completed within tolerance specs.")
+            submitted = st.form_submit_button("Generate Report & Evaluate")
+
+    if submitted:
+        st.markdown("---")
+        st.header("Tolerance Summary Table")
+
+        all_after_passed = True
+        for item in input_results:
+            item["after_status"] = "PASS" if item["after_val"] <= item["target"] else "FAIL"
+            if item["after_status"] == "FAIL":
+                all_after_passed = False
+
+            if include_as_found and item["before_val"] is not None:
+                item["before_status"] = "PASS" if item["before_val"] <= item["target"] else "FAIL"
+
+        st.markdown(f"**Report For:** {report_for if report_for else 'N/A'} | **Report By:** {report_by if report_by else 'N/A'} | **Equipment #:** {equipment_num if equipment_num else 'N/A'}")
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        table_html = "<table style='width:100%; border-collapse:collapse; text-align:center; font-family:sans-serif;'>"
+        table_html += "<tr style='background-color:#1A365D; color:white;'><th style='padding:10px; text-align:left;'>Parameter</th><th style='padding:10px;'>Spec Limit</th>"
         if include_as_found:
-            before_bg = "#DCFCE7" if item["before_status"] == "PASS" else "#FEE2E2"
-            before_fg = "#166534" if item["before_status"] == "PASS" else "#991B1B"
-            table_html += f"<td style='padding:10px;'>{item['before_val']:.3f}\"</td><td style='padding:8px;'><span style='background-color:{before_bg}; color:{before_fg}; padding:4px 12px; border-radius:4px; font-weight:bold;'>{item['before_status']}</span></td>"
+            table_html += "<th style='padding:10px;'>As-Found</th><th style='padding:10px;'>As-Found Status</th>"
+        table_html += "<th style='padding:10px;'>As-Left</th><th style='padding:10px;'>As-Left Status</th></tr>"
+
+        for item in input_results:
+            after_bg = "#DCFCE7" if item["after_status"] == "PASS" else "#FEE2E2"
+            after_fg = "#166534" if item["after_status"] == "PASS" else "#991B1B"
             
-        table_html += f"<td style='padding:10px;'>{item['after_val']:.3f}\"</td><td style='padding:8px;'><span style='background-color:{after_bg}; color:{after_fg}; padding:4px 12px; border-radius:4px; font-weight:bold;'>{item['after_status']}</span></td></tr>"
+            table_html += f"<tr style='border-bottom:1px solid #e2e8f0;'><td style='padding:10px; text-align:left;'><b>{item['label']}</b></td><td style='padding:10px;'>≤ {item['target']:.3f}\"</td>"
+            
+            if include_as_found:
+                before_bg = "#DCFCE7" if item["before_status"] == "PASS" else "#FEE2E2"
+                before_fg = "#166534" if item["before_status"] == "PASS" else "#991B1B"
+                table_html += f"<td style='padding:10px;'>{item['before_val']:.3f}\"</td><td style='padding:8px;'><span style='background-color:{before_bg}; color:{before_fg}; padding:4px 12px; border-radius:4px; font-weight:bold;'>{item['before_status']}</span></td>"
+                
+            table_html += f"<td style='padding:10px;'>{item['after_val']:.3f}\"</td><td style='padding:8px;'><span style='background-color:{after_bg}; color:{after_fg}; padding:4px 12px; border-radius:4px; font-weight:bold;'>{item['after_status']}</span></td></tr>"
 
-    table_html += "</table>"
-    st.markdown(table_html, unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
+        table_html += "</table>"
+        st.markdown(table_html, unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
-    if all_after_passed:
-        st.success("✔ ALL AS-LEFT READINGS ARE WITHIN SPECIFICATION")
-    else:
-        st.error("✖ ONE OR MORE AS-LEFT READINGS EXCEED SPECIFICATION")
+        if all_after_passed:
+            st.success("✔ ALL AS-LEFT READINGS ARE WITHIN SPECIFICATION")
+        else:
+            st.error("✖ ONE OR MORE AS-LEFT READINGS EXCEED SPECIFICATION")
 
-    meta_data = {
-        "report_for": report_for if report_for else "N/A",
-        "report_by": report_by if report_by else "N/A",
-        "equipment_num": equipment_num if equipment_num else "N/A"
-    }
+        meta_data = {
+            "report_for": report_for if report_for else "N/A",
+            "report_by": report_by if report_by else "N/A",
+            "equipment_num": equipment_num if equipment_num else "N/A"
+        }
 
-    pdf_file = generate_pdf_report(
-        selected_equipment,
-        meta_data,
-        input_results, 
-        notes, 
-        logo_bytes_io, 
-        photo_bytes_io, 
-        include_as_found
-    )
+        pdf_file = generate_pdf_report(
+            selected_equipment,
+            meta_data,
+            input_results, 
+            notes, 
+            logo_bytes_io, 
+            photo_bytes_io, 
+            include_as_found
+        )
 
-    st.download_button(
-        label=f"📄 Download Printable PDF Report ({selected_equipment})",
-        data=pdf_file,
-        file_name=f"{selected_equipment.lower().replace(' ', '_')}_alignment_report.pdf",
-        mime="application/pdf"
-    )
+        st.download_button(
+            label=f"📄 Download Printable PDF Report ({selected_equipment})",
+            data=pdf_file,
+            file_name=f"{selected_equipment.lower().replace(' ', '_')}_alignment_report.pdf",
+            mime="application/pdf"
+        )
