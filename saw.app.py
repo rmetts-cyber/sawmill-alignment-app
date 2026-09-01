@@ -58,7 +58,7 @@ EQUIPMENT_CONFIGS = {
 # -----------------------------------------------------------------------------
 # 2. PDF Report Generator
 # -----------------------------------------------------------------------------
-def generate_pdf_report(equipment_name, param_data, notes, logo_bytes, photo_bytes, include_as_found):
+def generate_pdf_report(equipment_name, meta_data, param_data, notes, logo_bytes, photo_bytes, include_as_found):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
     story = []
@@ -76,9 +76,17 @@ def generate_pdf_report(equipment_name, param_data, notes, logo_bytes, photo_byt
     
     title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, textColor=colors.HexColor('#1A365D'))
     story.append(Paragraph(f"{equipment_name} Alignment Report", title_style))
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 8))
 
-    # 2. Equipment Photo Section
+    # 2. Metadata Block (Report for, Report by, Equipment #)
+    meta_style = ParagraphStyle('MetaStyle', parent=styles['Normal'], fontSize=10, leading=14, textColor=colors.HexColor('#333333'))
+    meta_text = f"<b>Report For:</b> {meta_data['report_for']}<br/>" \
+                f"<b>Report By:</b> {meta_data['report_by']}<br/>" \
+                f"<b>Equipment #:</b> {meta_data['equipment_num']}"
+    story.append(Paragraph(meta_text, meta_style))
+    story.append(Spacer(1, 12))
+
+    # 3. Equipment Photo Section
     if photo_bytes:
         try:
             photo_img = RLImage(photo_bytes, width=450, height=240)
@@ -87,7 +95,7 @@ def generate_pdf_report(equipment_name, param_data, notes, logo_bytes, photo_byt
         except Exception:
             pass
 
-    # 3. Dynamic Measurement Table
+    # 4. Dynamic Measurement Table
     if include_as_found:
         table_data = [["Parameter", "Target Spec", "As-Found", "Status", "As-Left", "Status"]]
         col_widths = [160, 75, 75, 65, 75, 65]
@@ -145,7 +153,7 @@ def generate_pdf_report(equipment_name, param_data, notes, logo_bytes, photo_byt
     story.append(t)
     story.append(Spacer(1, 14))
 
-    # 4. Service Notes Section
+    # 5. Service Notes Section
     story.append(Paragraph("<b>Technician Maintenance Notes:</b>", styles['Heading3']))
     story.append(Paragraph(notes, styles['Normal']))
 
@@ -160,7 +168,7 @@ st.set_page_config(page_title="Alignment Report Builder", layout="wide")
 
 st.sidebar.title("Configuration & Branding")
 
-# 1. Company Logo Upload Option
+# Company Logo Upload Option
 uploaded_logo = st.sidebar.file_uploader("Upload Company Logo (Optional)", type=["png", "jpg", "jpeg"])
 logo_bytes_io = None
 if uploaded_logo is not None:
@@ -169,14 +177,29 @@ if uploaded_logo is not None:
     logo_img.save(logo_bytes_io, format="PNG")
     logo_bytes_io.seek(0)
 
-# 2. Equipment Selection Dropdown
+# Equipment Selection Dropdown
 selected_equipment = st.sidebar.selectbox("Select Equipment Type:", list(EQUIPMENT_CONFIGS.keys()))
 
-# 3. Optional As-Found Checkbox
+# Optional As-Found Checkbox
 include_as_found = st.sidebar.checkbox("Include As-Found (Before) Readings", value=True)
 
 st.title("Equipment Alignment Report Builder")
 st.markdown(f"Active Machine Profile: **{selected_equipment}**")
+
+# Top Metadata Entry Section
+st.header("Job Details")
+mc1, mc2, mc3 = st.columns(3)
+
+with mc1:
+    report_for = st.text_input("Report for", placeholder="enter company name")
+
+with mc2:
+    report_by = st.text_input("Report by", placeholder="enter your name")
+
+with mc3:
+    equipment_num = st.text_input("Equipment #", placeholder="enter equipment number")
+
+st.markdown("---")
 
 col1, col2 = st.columns([1, 1], gap="medium")
 
@@ -244,6 +267,10 @@ if submitted:
         if include_as_found and item["before_val"] is not None:
             item["before_status"] = "PASS" if item["before_val"] <= item["target"] else "FAIL"
 
+    # Display On-Screen Header Details
+    st.markdown(f"**Report For:** {report_for if report_for else 'N/A'} | **Report By:** {report_by if report_by else 'N/A'} | **Equipment #:** {equipment_num if equipment_num else 'N/A'}")
+    st.markdown("<br>", unsafe_allow_html=True)
+
     # Display Styled HTML Table with Red/Green Badges
     table_html = "<table style='width:100%; border-collapse:collapse; text-align:center; font-family:sans-serif;'>"
     table_html += "<tr style='background-color:#1A365D; color:white;'><th style='padding:10px; text-align:left;'>Parameter</th><th style='padding:10px;'>Spec Limit</th>"
@@ -273,9 +300,17 @@ if submitted:
     else:
         st.error("✖ ONE OR MORE AS-LEFT READINGS EXCEED SPECIFICATION")
 
+    # Metadata dictionary for PDF generator
+    meta_data = {
+        "report_for": report_for if report_for else "N/A",
+        "report_by": report_by if report_by else "N/A",
+        "equipment_num": equipment_num if equipment_num else "N/A"
+    }
+
     # Generate Downloadable PDF
     pdf_file = generate_pdf_report(
-        selected_equipment, 
+        selected_equipment,
+        meta_data,
         input_results, 
         notes, 
         logo_bytes_io, 
