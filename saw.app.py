@@ -49,6 +49,13 @@ DEFAULT_EQUIPMENT = {
         ("Infeed Spike Roll Centering", 0.012),
         ("Anvil-to-Knife Clearance", 0.006),
         ("Bottom Chain Bed Levelness", 0.010)
+    ],
+    "Double Cut Vertical Band Mill": [
+        ("Wheel Offset", 0.000),
+        ("Wheel Skew", 0.000),
+        ("Saw Crossline", 0.000),
+        ("Wheel Face Plum", 0.000),
+        ("Bottom Wheel Level", 0.000)
     ]
 }
 
