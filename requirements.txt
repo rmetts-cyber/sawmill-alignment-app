@@ -1,6 +1,5 @@
 streamlit
+Pillow
 reportlab
-pillow
 pypdf
-PdfMerger
 google-genai
