@@ -1,73 +1,108 @@
 import io
 import streamlit as st
 from PIL import Image
+from pypdf import PdfMerger
+from google import genai
 
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-DEFAULT_EQUIPMENT = {
+# -----------------------------------------------------------------------------
+# 1. Default Equipment Configurations (Stored in Python)
+# -----------------------------------------------------------------------------
+DEFAULT_CONFIGS = {
     "Band Mill Carriage Track": [
-        ("Vee Rail Straightness (Guide Side)", 0.015),
-        ("Flat Rail Straightness (Support Side)", 0.015),
-        ("Lateral Rail Parallelism Error", 0.010),
-        ("Knee-to-Blade Parallelism", 0.010)
+        {"label": "Vee Rail Straightness (Guide Side)", "target": 0.015},
+        {"label": "Flat Rail Straightness (Support Side)", "target": 0.015},
+        {"label": "Lateral Rail Parallelism Error", "target": 0.010},
+        {"label": "Knee-to-Blade Parallelism", "target": 0.010}
     ],
     "Endogger": [
-        ("Overhead Chain Parallelism", 0.012),
-        ("Dog Pin Elevation Variance", 0.010),
-        ("Feed Track Runout", 0.015),
-        ("Blade-to-Cradle Centerline Offset", 0.008)
+        {"label": "Overhead Chain Parallelism", "target": 0.012},
+        {"label": "Dog Pin Elevation Variance", "target": 0.010},
+        {"label": "Feed Track Runout", "target": 0.015},
+        {"label": "Blade-to-Cradle Centerline Offset", "target": 0.008}
     ],
     "Curve Sawing Gang": [
-        ("Saw Arbor Axial Play", 0.005),
-        ("Feed Roll Parallelism", 0.010),
-        ("Curved Guide Slewing Tolerance", 0.012),
-        ("Cant Centering Alignment", 0.010)
+        {"label": "Saw Arbor Axial Play", "target": 0.005},
+        {"label": "Feed Roll Parallelism", "target": 0.010},
+        {"label": "Curved Guide Slewing Tolerance", "target": 0.012},
+        {"label": "Cant Centering Alignment", "target": 0.010}
     ],
     "Resaw": [
-        ("Feed Wheel Vertical Alignment", 0.008),
-        ("Fence-to-Blade Parallelism", 0.006),
-        ("Band Flywheel Tracking Alignment", 0.010),
-        ("Bed Plate Levelness Deviation", 0.008)
+        {"label": "Feed Wheel Vertical Alignment", "target": 0.008},
+        {"label": "Fence-to-Blade Parallelism", "target": 0.006},
+        {"label": "Band Flywheel Tracking Alignment", "target": 0.010},
+        {"label": "Bed Plate Levelness Deviation", "target": 0.008}
     ],
     "Edger": [
-        ("Shift Saw Arbor Alignment", 0.008),
-        ("Press Roll Parallelism", 0.010),
-        ("Laser Guide Offset Alignment", 0.015),
-        ("Outfeed Table Levelness", 0.010)
+        {"label": "Shift Saw Arbor Alignment", "target": 0.008},
+        {"label": "Press Roll Parallelism", "target": 0.010},
+        {"label": "Laser Guide Offset Alignment", "target": 0.015},
+        {"label": "Outfeed Table Levelness", "target": 0.010}
     ],
     "Planer": [
-        ("Cutterhead Parallelism to Bed", 0.004),
-        ("Top Feed Roll Pressure Sync", 0.008),
-        ("Side Head Spindle Squareness", 0.005),
-        ("Bed Plate Wear Deviation", 0.008)
+        {"label": "Cutterhead Parallelism to Bed", "target": 0.004},
+        {"label": "Top Feed Roll Pressure Sync", "target": 0.008},
+        {"label": "Side Head Spindle Squareness", "target": 0.005},
+        {"label": "Bed Plate Wear Deviation", "target": 0.008}
     ],
     "Chipping Canter": [
-        ("Chipping Head Offset Calibration", 0.008),
-        ("Infeed Spike Roll Centering", 0.012),
-        ("Anvil-to-Knife Clearance", 0.006),
-        ("Bottom Chain Bed Levelness", 0.010)
-    ],
-    "Double Cut Vertical Band Mill": [
-        ("Wheel Offset", 0.000),
-        ("Wheel Skew", 0.000),
-        ("Saw Crossline", 0.000),
-        ("Wheel Face Plum", 0.000),
-        ("Bottom Wheel Level", 0.000)
+        {"label": "Chipping Head Offset Calibration", "target": 0.008},
+        {"label": "Infeed Spike Roll Centering", "target": 0.012},
+        {"label": "Anvil-to-Knife Clearance", "target": 0.006},
+        {"label": "Bottom Chain Bed Levelness", "target": 0.010}
     ]
 }
 
+# Initialize session_state so user edits persist while navigating the app
 if "equipment_configs" not in st.session_state:
-    st.session_state["equipment_configs"] = DEFAULT_EQUIPMENT.copy()
+    st.session_state.equipment_configs = DEFAULT_CONFIGS.copy()
 
-def generate_pdf_report(equipment_name, meta_data, param_data, notes, logo_bytes, photo_bytes, include_as_found):
+# -----------------------------------------------------------------------------
+# 2. Gemma AI Diagnostic Assistant Function
+# -----------------------------------------------------------------------------
+def analyze_with_gemma(equipment_name, param_data, user_notes, api_key):
+    """Sends alignment measurements to Gemma to produce a diagnostic field summary."""
+    client = genai.Client(api_key=api_key)
+    
+    readings_text = ""
+    for p in param_data:
+        status = "FAIL" if p["after_val"] > p["target"] else "PASS"
+        readings_text += f"- {p['label']}: Target ≤ {p['target']:.3f}\", As-Found: {p['before_val']:.3f}\", As-Left: {p['after_val']:.3f}\" ({status})\n"
+
+    prompt = f"""
+    You are an expert industrial machinery alignment technician. 
+    Analyze these alignment measurements for a {equipment_name} in a sawmill:
+
+    {readings_text}
+
+    Technician Field Notes: {user_notes}
+
+    Provide:
+    1. A 2-sentence executive summary of the machine's post-service health.
+    2. 2 practical maintenance tips or shimming/bearing recommendations if any parameter required major correction or failed spec.
+    Keep the tone concise and professional for a client report.
+    """
+
+    response = client.models.generate_content(
+        model="gemma-2-9b-it", 
+        contents=prompt
+    )
+    return response.text
+
+# -----------------------------------------------------------------------------
+# 3. PDF Generator & PDF Merger Functions
+# -----------------------------------------------------------------------------
+def generate_pdf_report(equipment_name, param_data, notes, ai_summary, logo_bytes, photo_bytes, include_as_found):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
     story = []
     styles = getSampleStyleSheet()
 
+    # Logo Header
     if logo_bytes:
         try:
             logo_img = RLImage(logo_bytes, width=180, height=60)
@@ -79,15 +114,9 @@ def generate_pdf_report(equipment_name, meta_data, param_data, notes, logo_bytes
     
     title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, textColor=colors.HexColor('#1A365D'))
     story.append(Paragraph(f"{equipment_name} Alignment Report", title_style))
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 10))
 
-    meta_style = ParagraphStyle('MetaStyle', parent=styles['Normal'], fontSize=10, leading=14, textColor=colors.HexColor('#333333'))
-    meta_text = f"<b>Report For:</b> {meta_data['report_for']}<br/>" \
-                f"<b>Report By:</b> {meta_data['report_by']}<br/>" \
-                f"<b>Equipment #:</b> {meta_data['equipment_num']}"
-    story.append(Paragraph(meta_text, meta_style))
-    story.append(Spacer(1, 12))
-
+    # Equipment Photo
     if photo_bytes:
         try:
             photo_img = RLImage(photo_bytes, width=450, height=240)
@@ -96,6 +125,7 @@ def generate_pdf_report(equipment_name, meta_data, param_data, notes, logo_bytes
         except Exception:
             pass
 
+    # Measurement Table Construction
     if include_as_found:
         table_data = [["Parameter", "Target Spec", "As-Found", "Status", "As-Left", "Status"]]
         col_widths = [160, 75, 75, 65, 75, 65]
@@ -124,24 +154,22 @@ def generate_pdf_report(equipment_name, meta_data, param_data, notes, logo_bytes
             before_status = row['before_status']
             table_data.append([row['label'], target_str, before_str, before_status, after_str, after_status])
 
+            # Red/Green Pass/Fail background highlights
             b_bg = colors.HexColor('#DCFCE7') if before_status == "PASS" else colors.HexColor('#FEE2E2')
             b_text = colors.HexColor('#166534') if before_status == "PASS" else colors.HexColor('#991B1B')
             table_styles.append(('BACKGROUND', (3, row_idx), (3, row_idx), b_bg))
             table_styles.append(('TEXTCOLOR', (3, row_idx), (3, row_idx), b_text))
-            table_styles.append(('FONTNAME', (3, row_idx), (3, row_idx), 'Helvetica-Bold'))
 
             a_bg = colors.HexColor('#DCFCE7') if after_status == "PASS" else colors.HexColor('#FEE2E2')
             a_text = colors.HexColor('#166534') if after_status == "PASS" else colors.HexColor('#991B1B')
             table_styles.append(('BACKGROUND', (5, row_idx), (5, row_idx), a_bg))
             table_styles.append(('TEXTCOLOR', (5, row_idx), (5, row_idx), a_text))
-            table_styles.append(('FONTNAME', (5, row_idx), (5, row_idx), 'Helvetica-Bold'))
         else:
             table_data.append([row['label'], target_str, after_str, after_status])
             a_bg = colors.HexColor('#DCFCE7') if after_status == "PASS" else colors.HexColor('#FEE2E2')
             a_text = colors.HexColor('#166534') if after_status == "PASS" else colors.HexColor('#991B1B')
             table_styles.append(('BACKGROUND', (3, row_idx), (3, row_idx), a_bg))
             table_styles.append(('TEXTCOLOR', (3, row_idx), (3, row_idx), a_text))
-            table_styles.append(('FONTNAME', (3, row_idx), (3, row_idx), 'Helvetica-Bold'))
 
         row_idx += 1
 
@@ -150,19 +178,40 @@ def generate_pdf_report(equipment_name, meta_data, param_data, notes, logo_bytes
     story.append(t)
     story.append(Spacer(1, 14))
 
-    story.append(Paragraph("<b>Technician Maintenance Notes:</b>", styles['Heading3']))
+    # AI Diagnostic Section (if run)
+    if ai_summary:
+        story.append(Paragraph("<b>AI Diagnostic Summary & Recommendations:</b>", styles['Heading3']))
+        story.append(Paragraph(ai_summary.replace('\n', '<br/>'), styles['Normal']))
+        story.append(Spacer(1, 10))
+
+    # Technician Notes Section
+    story.append(Paragraph("<b>Technician Field Notes:</b>", styles['Heading3']))
     story.append(Paragraph(notes, styles['Normal']))
 
     doc.build(story)
     buffer.seek(0)
     return buffer
 
-st.set_page_config(page_title="Alignment Report Builder", layout="wide")
+def merge_pdf_files(pdf_file_list):
+    """Combines uploaded PDF reports into a single file."""
+    merger = PdfMerger()
+    for pdf in pdf_file_list:
+        merger.append(pdf)
+    merged_buffer = io.BytesIO()
+    merger.write(merged_buffer)
+    merger.close()
+    merged_buffer.seek(0)
+    return merged_buffer
 
-st.sidebar.title("Configuration & Tools")
+# -----------------------------------------------------------------------------
+# 4. Main Streamlit User Interface
+# -----------------------------------------------------------------------------
+st.set_page_config(page_title="Sawmill Alignment Tool", layout="wide")
 
-app_mode = st.sidebar.radio("App View Mode:", ["Create Report", "Merge PDF Reports", "Edit Equipment Profiles"])
+# Sidebar Configuration
+st.sidebar.title("Branding & Options")
 
+# Logo Upload
 uploaded_logo = st.sidebar.file_uploader("Upload Company Logo (Optional)", type=["png", "jpg", "jpeg"])
 logo_bytes_io = None
 if uploaded_logo is not None:
@@ -171,110 +220,29 @@ if uploaded_logo is not None:
     logo_img.save(logo_bytes_io, format="PNG")
     logo_bytes_io.seek(0)
 
-if app_mode == "Merge PDF Reports":
-    st.title("📎 Merge PDF Reports")
-    st.write("Upload two or more generated PDF reports to combine them into a single master document.")
+# Key Input (Checks Streamlit Secrets first, or sidebar input second)
+gemma_api_key = st.sidebar.text_input("Gemma API Key (Optional)", type="password", help="Enter key or save in Streamlit Secrets")
+active_api_key = st.secrets.get("GEMMA_API_KEY") if "GEMMA_API_KEY" in st.secrets else gemma_api_key
 
-    uploaded_pdfs = st.file_uploader("Select PDF Alignment Reports to Merge", type=["pdf"], accept_multiple_files=True)
+# Tabs Layout
+tab_report, tab_editor, tab_merger = st.tabs(["📝 Build Report", "⚙️ Manage Machines & Specs", "📑 Merge PDFs"])
 
-    if uploaded_pdfs and len(uploaded_pdfs) >= 2:
-        if st.button("🔗 Merge Selected PDF Reports"):
-            try:
-                try:
-                    import fitz  # PyMuPDF
-                    merged_doc = fitz.open()
-                    for uploaded_pdf in uploaded_pdfs:
-                        doc = fitz.open(stream=uploaded_pdf.read(), filetype="pdf")
-                        merged_doc.insert_pdf(doc)
-                    merged_bytes = merged_doc.tobytes()
-                except ImportError:
-                    from pypdf import PdfWriter
-                    writer = PdfWriter()
-                    for uploaded_pdf in uploaded_pdfs:
-                        writer.append(uploaded_pdf)
-                    merged_buffer = io.BytesIO()
-                    writer.write(merged_buffer)
-                    merged_bytes = merged_buffer.getvalue()
-
-                st.success("PDFs successfully merged!")
-                st.download_button(
-                    label="📄 Download Merged Master Report PDF",
-                    data=merged_bytes,
-                    file_name="master_sawmill_alignment_report.pdf",
-                    mime="application/pdf"
-                )
-            except Exception as e:
-                st.error(f"Error merging PDFs: {e}")
-
-elif app_mode == "Edit Equipment Profiles":
-    st.title("⚙️ Equipment Profile Editor")
-    st.write("Add new machinery or adjust default parameter specs without touching any code.")
-
-    st.subheader("1. Add New Equipment Type")
-    new_eq_name = st.text_input("New Equipment Name (e.g., 'Trimmer' or 'Debarker')")
-    if st.button("Add New Equipment"):
-        if new_eq_name and new_eq_name not in st.session_state["equipment_configs"]:
-            st.session_state["equipment_configs"][new_eq_name] = [("General Alignment Check", 0.010)]
-            st.success(f"Added '{new_eq_name}' to equipment list!")
-            st.rerun()
-
-    st.markdown("---")
-    st.subheader("2. Modify Parameters for Existing Equipment")
-    selected_edit_eq = st.selectbox("Select Equipment to Edit:", list(st.session_state["equipment_configs"].keys()))
-
-    current_params = st.session_state["equipment_configs"][selected_edit_eq]
-
-    st.write(f"Editing parameters for **{selected_edit_eq}**:")
-    updated_params = []
-    for i, (param_label, param_target) in enumerate(current_params):
-        p_c1, p_c2 = st.columns([3, 1])
-        with p_c1:
-            new_label = st.text_input(f"Parameter #{i+1} Name", value=param_label, key=f"edit_label_{selected_edit_eq}_{i}")
-        with p_c2:
-            new_target = st.number_input(f"Spec Limit", value=param_target, step=0.001, format="%.3f", key=f"edit_target_{selected_edit_eq}_{i}")
-        updated_params.append((new_label, new_target))
-
-    st.session_state["equipment_configs"][selected_edit_eq] = updated_params
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    add_p_col1, add_p_col2 = st.columns([3, 1])
-    with add_p_col1:
-        add_param_name = st.text_input("Add New Parameter Name for this machine", key=f"add_p_{selected_edit_eq}")
-    with add_p_col2:
-        add_param_target = st.number_input("Spec Limit", value=0.010, step=0.001, format="%.3f", key=f"add_t_{selected_edit_eq}")
-
-    if st.button("Add Parameter to Machine"):
-        if add_param_name:
-            st.session_state["equipment_configs"][selected_edit_eq].append((add_param_name, add_param_target))
-            st.success(f"Added '{add_param_name}'!")
-            st.rerun()
-
-else:
-    selected_equipment = st.sidebar.selectbox("Select Equipment Type:", list(st.session_state["equipment_configs"].keys()))
+# -----------------------------------------------------------------------------
+# TAB 1: BUILD REPORT
+# -----------------------------------------------------------------------------
+with tab_report:
+    st.sidebar.title("Machine Selection")
+    selected_equipment = st.sidebar.selectbox("Select Machine Type:", list(st.session_state.equipment_configs.keys()))
     include_as_found = st.sidebar.checkbox("Include As-Found (Before) Readings", value=True)
 
     st.title("Equipment Alignment Report Builder")
     st.markdown(f"Active Machine Profile: **{selected_equipment}**")
 
-    st.header("Job Details")
-    mc1, mc2, mc3 = st.columns(3)
-
-    with mc1:
-        report_for = st.text_input("Report for", placeholder="enter company name")
-
-    with mc2:
-        report_by = st.text_input("Report by", placeholder="enter your name")
-
-    with mc3:
-        equipment_num = st.text_input("Equipment #", placeholder="enter equipment number")
-
-    st.markdown("---")
-
     col1, col2 = st.columns([1, 1], gap="medium")
 
     with col1:
-        st.header("Equipment Photo")
-        uploaded_photo = st.file_uploader("Upload Photo of Equipment (Optional)", type=["jpg", "jpeg", "png"])
+        st.header("1. Equipment Photo")
+        uploaded_photo = st.file_uploader("Upload Field Photo (Optional)", type=["jpg", "jpeg", "png"])
         photo_bytes_io = None
         if uploaded_photo is not None:
             photo_img = Image.open(uploaded_photo)
@@ -282,16 +250,17 @@ else:
             photo_bytes_io = io.BytesIO()
             photo_img.save(photo_bytes_io, format="JPEG")
             photo_bytes_io.seek(0)
-        else:
-            st.info("No photo uploaded. (Optional)")
 
     with col2:
-        st.header("Measurement Entry")
-        param_list = st.session_state["equipment_configs"][selected_equipment]
+        st.header("2. Measurement Entry")
+        param_list = st.session_state.equipment_configs[selected_equipment]
         input_results = []
 
         with st.form("alignment_form"):
-            for label, default_target in param_list:
+            for item in param_list:
+                label = item["label"]
+                default_target = item["target"]
+                
                 st.subheader(label)
                 c1, c2, c3 = st.columns(3)
                 
@@ -320,7 +289,7 @@ else:
 
     if submitted:
         st.markdown("---")
-        st.header("Tolerance Summary Table")
+        st.header("3. Tolerance Summary Table")
 
         all_after_passed = True
         for item in input_results:
@@ -331,9 +300,7 @@ else:
             if include_as_found and item["before_val"] is not None:
                 item["before_status"] = "PASS" if item["before_val"] <= item["target"] else "FAIL"
 
-        st.markdown(f"**Report For:** {report_for if report_for else 'N/A'} | **Report By:** {report_by if report_by else 'N/A'} | **Equipment #:** {equipment_num if equipment_num else 'N/A'}")
-        st.markdown("<br>", unsafe_allow_html=True)
-
+        # On-Screen HTML Table Display
         table_html = "<table style='width:100%; border-collapse:collapse; text-align:center; font-family:sans-serif;'>"
         table_html += "<tr style='background-color:#1A365D; color:white;'><th style='padding:10px; text-align:left;'>Parameter</th><th style='padding:10px;'>Spec Limit</th>"
         if include_as_found:
@@ -362,17 +329,24 @@ else:
         else:
             st.error("✖ ONE OR MORE AS-LEFT READINGS EXCEED SPECIFICATION")
 
-        meta_data = {
-            "report_for": report_for if report_for else "N/A",
-            "report_by": report_by if report_by else "N/A",
-            "equipment_num": equipment_num if equipment_num else "N/A"
-        }
+        # Gemma AI Integration
+        ai_summary_text = ""
+        if active_api_key:
+            st.markdown("---")
+            st.subheader("🤖 Gemma AI Diagnostic Assistant")
+            with st.spinner("Gemma is evaluating tolerances and drafting diagnostic notes..."):
+                try:
+                    ai_summary_text = analyze_with_gemma(selected_equipment, input_results, notes, active_api_key)
+                    st.info(ai_summary_text)
+                except Exception as e:
+                    st.warning(f"Gemma analysis unavailable: {e}")
 
+        # PDF Report Download
         pdf_file = generate_pdf_report(
-            selected_equipment,
-            meta_data,
+            selected_equipment, 
             input_results, 
             notes, 
+            ai_summary_text,
             logo_bytes_io, 
             photo_bytes_io, 
             include_as_found
@@ -384,3 +358,104 @@ else:
             file_name=f"{selected_equipment.lower().replace(' ', '_')}_alignment_report.pdf",
             mime="application/pdf"
         )
+
+# -----------------------------------------------------------------------------
+# TAB 2: MANAGE MACHINES & SPECS
+# -----------------------------------------------------------------------------
+with tab_editor:
+    st.header("Equipment & Measurement Editor")
+    st.write("Add new machinery, modify baseline specs, or edit/delete measurement rows for this session.")
+
+    col_a, col_b = st.columns([1, 1], gap="large")
+
+    with col_a:
+        st.subheader("1. Select Machine Profile to Edit")
+        edit_target = st.selectbox("Machine Profile:", list(st.session_state.equipment_configs.keys()), key="edit_target_select")
+        
+        # Add New Machine Section
+        new_machine_name = st.text_input("Or Create New Machine Profile Name:")
+        if st.button("➕ Add New Machine Profile"):
+            if new_machine_name and new_machine_name not in st.session_state.equipment_configs:
+                st.session_state.equipment_configs[new_machine_name] = [
+                    {"label": "General Parallelism", "target": 0.010}
+                ]
+                st.success(f"Added profile '{new_machine_name}'!")
+                st.rerun()
+
+        # Delete Machine Profile
+        if st.button(f"🗑️ Delete Profile '{edit_target}'", type="primary"):
+            if len(st.session_state.equipment_configs) > 1:
+                del st.session_state.equipment_configs[edit_target]
+                st.success(f"Deleted '{edit_target}'.")
+                st.rerun()
+            else:
+                st.error("Cannot delete the last remaining machine profile!")
+
+    with col_b:
+        st.subheader(f"2. Edit Measurements for '{edit_target}'")
+        current_params = st.session_state.equipment_configs[edit_target]
+        updated_params = []
+
+        with st.form(f"edit_form_{edit_target}"):
+            for idx, item in enumerate(current_params):
+                st.markdown(f"**Measurement Point #{idx+1}**")
+                c1, c2, c3 = st.columns([3, 2, 1])
+                
+                with c1:
+                    new_label = st.text_input("Parameter Description", value=item["label"], key=f"lbl_{edit_target}_{idx}")
+                with c2:
+                    new_target = st.number_input("Default Spec Limit (in)", value=float(item["target"]), step=0.001, format="%.3f", key=f"tgt_{edit_target}_{idx}")
+                with c3:
+                    delete_row = st.checkbox("Delete", key=f"del_{edit_target}_{idx}")
+
+                if not delete_row:
+                    updated_params.append({"label": new_label, "target": new_target})
+
+            st.markdown("---")
+            st.markdown("**Add Additional Measurement Row:**")
+            add_c1, add_c2 = st.columns([3, 2])
+            with add_c1:
+                add_label = st.text_input("New Parameter Label", placeholder="e.g. Bed Levelness Error", key=f"add_lbl_{edit_target}")
+            with add_c2:
+                add_target = st.number_input("New Spec Limit (in)", value=0.010, step=0.001, format="%.3f", key=f"add_tgt_{edit_target}")
+
+            if add_label:
+                updated_params.append({"label": add_label, "target": add_target})
+
+            save_changes = st.form_submit_button("💾 Apply Changes")
+
+        if save_changes:
+            st.session_state.equipment_configs[edit_target] = updated_params
+            st.success("Configuration updated!")
+            st.rerun()
+
+# -----------------------------------------------------------------------------
+# TAB 3: MERGE PDFS
+# -----------------------------------------------------------------------------
+with tab_merger:
+    st.header("Merge Multiple Equipment Reports")
+    st.write("Upload individual PDF reports to compile them into a single deliverable package for your customer.")
+
+    uploaded_pdfs = st.file_uploader(
+        "Upload PDF Reports", 
+        type=["pdf"], 
+        accept_multiple_files=True,
+        key="pdf_merger_tab"
+    )
+
+    if uploaded_pdfs:
+        st.write(f"**Selected Reports ({len(uploaded_pdfs)}):**")
+        for pdf in uploaded_pdfs:
+            st.caption(f"• {pdf.name}")
+
+        merged_pdf_name = st.text_input("Combined File Name", value="Complete_Sawmill_Alignment_Audit.pdf")
+
+        if st.button("Merge PDFs into Single Package"):
+            merged_file = merge_pdf_files(uploaded_pdfs)
+            st.success("✔ PDFs Merged Successfully!")
+            st.download_button(
+                label="📥 Download Combined Report Package",
+                data=merged_file,
+                file_name=merged_pdf_name,
+                mime="application/pdf"
+            )
