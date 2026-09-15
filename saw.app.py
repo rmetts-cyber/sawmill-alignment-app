@@ -1,7 +1,19 @@
 import io
+import subprocess
+import sys
+
+# -----------------------------------------------------------------------------
+# 0. Automatic Dependency Management
+# -----------------------------------------------------------------------------
+for pkg in ["pypdf", "reportlab", "Pillow", "google-genai"]:
+    try:
+        __import__(pkg if pkg != "Pillow" else "PIL")
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+
 import streamlit as st
 from PIL import Image
-from pypdf import PdfWriter
+from pypdf import PdfMerger
 from google import genai
 
 from reportlab.lib.pagesizes import letter
@@ -10,7 +22,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RL
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 # -----------------------------------------------------------------------------
-# 1. Default Equipment Configurations (Stored in Python)
+# 1. Default Equipment Configurations
 # -----------------------------------------------------------------------------
 DEFAULT_CONFIGS = {
     "Band Mill Carriage Track": [
@@ -57,15 +69,13 @@ DEFAULT_CONFIGS = {
     ]
 }
 
-# Initialize session_state so user edits persist while navigating the app
 if "equipment_configs" not in st.session_state:
     st.session_state.equipment_configs = DEFAULT_CONFIGS.copy()
 
 # -----------------------------------------------------------------------------
-# 2. Gemma AI Diagnostic Assistant Function
+# 2. Gemini/Gemma Diagnostic Function
 # -----------------------------------------------------------------------------
-def analyze_with_gemma(equipment_name, param_data, user_notes, api_key):
-    """Sends alignment measurements to Gemma to produce a diagnostic field summary."""
+def analyze_with_ai(equipment_name, param_data, user_notes, api_key):
     client = genai.Client(api_key=api_key)
     
     readings_text = ""
@@ -94,9 +104,9 @@ def analyze_with_gemma(equipment_name, param_data, user_notes, api_key):
     return response.text
 
 # -----------------------------------------------------------------------------
-# 3. PDF Generator & PDF Merger Functions
+# 3. PDF Generation with Reinstated Metadata Fields
 # -----------------------------------------------------------------------------
-def generate_pdf_report(equipment_name, param_data, notes, ai_summary, logo_bytes, photo_bytes, include_as_found):
+def generate_pdf_report(equipment_name, param_data, notes, ai_summary, logo_bytes, photo_bytes, include_as_found, meta):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
     story = []
@@ -114,18 +124,41 @@ def generate_pdf_report(equipment_name, param_data, notes, ai_summary, logo_byte
     
     title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=18, textColor=colors.HexColor('#1A365D'))
     story.append(Paragraph(f"{equipment_name} Alignment Report", title_style))
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 8))
 
-    # Equipment Photo
+    # Metadata Header Block (Made For, Made By, Equipment #)
+    meta_data = [
+        [
+            Paragraph(f"<b>Report Made For:</b> {meta['made_for']}", styles['Normal']),
+            Paragraph(f"<b>Equipment / Tag #:</b> {meta['equip_num']}", styles['Normal'])
+        ],
+        [
+            Paragraph(f"<b>Report Made By:</b> {meta['made_by']}", styles['Normal']),
+            Paragraph(f"<b>Date:</b> {meta['date']}", styles['Normal'])
+        ]
+    ]
+    meta_table = Table(meta_data, colWidths=[270, 270])
+    meta_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F1F5F9')),
+        ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
+        ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#E2E8F0')),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    story.append(meta_table)
+    story.append(Spacer(1, 12))
+
+    # Photo Insertion
     if photo_bytes:
         try:
-            photo_img = RLImage(photo_bytes, width=450, height=240)
+            photo_img = RLImage(photo_bytes, width=450, height=220)
             story.append(photo_img)
             story.append(Spacer(1, 12))
         except Exception:
             pass
 
-    # Measurement Table Construction
+    # Measurement Data Table Construction
     if include_as_found:
         table_data = [["Parameter", "Target Spec", "As-Found", "Status", "As-Left", "Status"]]
         col_widths = [160, 75, 75, 65, 75, 65]
@@ -154,7 +187,6 @@ def generate_pdf_report(equipment_name, param_data, notes, ai_summary, logo_byte
             before_status = row['before_status']
             table_data.append([row['label'], target_str, before_str, before_status, after_str, after_status])
 
-            # Red/Green Pass/Fail background highlights
             b_bg = colors.HexColor('#DCFCE7') if before_status == "PASS" else colors.HexColor('#FEE2E2')
             b_text = colors.HexColor('#166534') if before_status == "PASS" else colors.HexColor('#991B1B')
             table_styles.append(('BACKGROUND', (3, row_idx), (3, row_idx), b_bg))
@@ -178,23 +210,22 @@ def generate_pdf_report(equipment_name, param_data, notes, ai_summary, logo_byte
     story.append(t)
     story.append(Spacer(1, 14))
 
-    # AI Diagnostic Section (if run)
-    if ai_summary:
+    # Optional AI Diagnostic Section
+    if ai_summary and ai_summary.strip():
         story.append(Paragraph("<b>AI Diagnostic Summary & Recommendations:</b>", styles['Heading3']))
         story.append(Paragraph(ai_summary.replace('\n', '<br/>'), styles['Normal']))
         story.append(Spacer(1, 10))
 
-    # Technician Notes Section
+    # Field Notes Section
     story.append(Paragraph("<b>Technician Field Notes:</b>", styles['Heading3']))
-    story.append(Paragraph(notes, styles['Normal']))
+    story.append(Paragraph(notes if notes else "N/A", styles['Normal']))
 
     doc.build(story)
     buffer.seek(0)
     return buffer
 
 def merge_pdf_files(pdf_file_list):
-    """Combines uploaded PDF reports into a single file using PdfWriter."""
-    merger = PdfWriter()
+    merger = PdfMerger()
     for pdf in pdf_file_list:
         merger.append(pdf)
     merged_buffer = io.BytesIO()
@@ -204,14 +235,11 @@ def merge_pdf_files(pdf_file_list):
     return merged_buffer
 
 # -----------------------------------------------------------------------------
-# 4. Main Streamlit User Interface
+# 4. Streamlit App Layout
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Sawmill Alignment Tool", layout="wide")
 
-# Sidebar Configuration
 st.sidebar.title("Branding & Options")
-
-# Logo Upload
 uploaded_logo = st.sidebar.file_uploader("Upload Company Logo (Optional)", type=["png", "jpg", "jpeg"])
 logo_bytes_io = None
 if uploaded_logo is not None:
@@ -220,11 +248,9 @@ if uploaded_logo is not None:
     logo_img.save(logo_bytes_io, format="PNG")
     logo_bytes_io.seek(0)
 
-# Key Input (Checks Streamlit Secrets first, or sidebar input second)
 gemma_api_key = st.sidebar.text_input("Gemma API Key (Optional)", type="password", help="Enter key or save in Streamlit Secrets")
 active_api_key = st.secrets.get("GEMMA_API_KEY") if "GEMMA_API_KEY" in st.secrets else gemma_api_key
 
-# Tabs Layout
 tab_report, tab_editor, tab_merger = st.tabs(["📝 Build Report", "⚙️ Manage Machines & Specs", "📑 Merge PDFs"])
 
 # -----------------------------------------------------------------------------
@@ -236,17 +262,36 @@ with tab_report:
     include_as_found = st.sidebar.checkbox("Include As-Found (Before) Readings", value=True)
 
     st.title("Equipment Alignment Report Builder")
-    st.markdown(f"Active Machine Profile: **{selected_equipment}**")
+    
+    # Metadata Form Header
+    st.subheader("📋 Report Metadata")
+    meta_col1, meta_col2, meta_col3, meta_col4 = st.columns(4)
+    with meta_col1:
+        made_for = st.text_input("Report Made For (Client/Mill):", value="Acme Lumber Mill")
+    with meta_col2:
+        made_by = st.text_input("Report Made By (Technician):", value="")
+    with meta_col3:
+        equip_num = st.text_input("Equipment / Tag Number:", value="LINE-01")
+    with meta_col4:
+        report_date = st.text_input("Inspection Date:", value="2026-09-15")
 
+    meta_dict = {
+        "made_for": made_for,
+        "made_by": made_by,
+        "equip_num": equip_num,
+        "date": report_date
+    }
+
+    st.markdown("---")
     col1, col2 = st.columns([1, 1], gap="medium")
 
     with col1:
-        st.header("1. Equipment Photo")
-        uploaded_photo = st.file_uploader("Upload Field Photo (Optional)", type=["jpg", "jpeg", "png"])
+        st.header("1. Field Photo")
+        uploaded_photo = st.file_uploader("Upload Photo (Optional)", type=["jpg", "jpeg", "png"])
         photo_bytes_io = None
         if uploaded_photo is not None:
             photo_img = Image.open(uploaded_photo)
-            st.image(photo_img, caption="Equipment Field Photo", use_container_width=True)
+            st.image(photo_img, caption="Equipment Photo", use_container_width=True)
             photo_bytes_io = io.BytesIO()
             photo_img.save(photo_bytes_io, format="JPEG")
             photo_bytes_io.seek(0)
@@ -300,7 +345,7 @@ with tab_report:
             if include_as_found and item["before_val"] is not None:
                 item["before_status"] = "PASS" if item["before_val"] <= item["target"] else "FAIL"
 
-        # On-Screen HTML Table Display
+        # On-Screen HTML Table
         table_html = "<table style='width:100%; border-collapse:collapse; text-align:center; font-family:sans-serif;'>"
         table_html += "<tr style='background-color:#1A365D; color:white;'><th style='padding:10px; text-align:left;'>Parameter</th><th style='padding:10px;'>Spec Limit</th>"
         if include_as_found:
@@ -329,27 +374,38 @@ with tab_report:
         else:
             st.error("✖ ONE OR MORE AS-LEFT READINGS EXCEED SPECIFICATION")
 
-        # Gemma AI Integration
-        ai_summary_text = ""
-        if active_api_key:
-            st.markdown("---")
-            st.subheader("🤖 Gemma AI Diagnostic Assistant")
-            with st.spinner("Gemma is evaluating tolerances and drafting diagnostic notes..."):
-                try:
-                    ai_summary_text = analyze_with_gemma(selected_equipment, input_results, notes, active_api_key)
-                    st.info(ai_summary_text)
-                except Exception as e:
-                    st.warning(f"Gemma analysis unavailable: {e}")
+        # --- AI TOGGLE & EDITABLE TEXT SECTION ---
+        st.markdown("---")
+        st.subheader("🤖 AI Diagnostic Summary")
+        
+        enable_ai = st.checkbox("Include AI Diagnostics in Report", value=True)
+        
+        if "ai_text_val" not in st.session_state:
+            st.session_state.ai_text_val = ""
 
-        # PDF Report Download
+        if enable_ai and active_api_key:
+            if st.button("✨ Generate AI Analysis"):
+                with st.spinner("AI is evaluating measurements..."):
+                    try:
+                        st.session_state.ai_text_val = analyze_with_ai(selected_equipment, input_results, notes, active_api_key)
+                    except Exception as e:
+                        st.warning(f"AI analysis unavailable: {e}")
+
+        if enable_ai:
+            final_ai_text = st.text_area("Review & Edit AI Analysis (Optional):", value=st.session_state.ai_text_val, height=140)
+        else:
+            final_ai_text = ""
+
+        # PDF Download Button
         pdf_file = generate_pdf_report(
             selected_equipment, 
             input_results, 
             notes, 
-            ai_summary_text,
+            final_ai_text,
             logo_bytes_io, 
             photo_bytes_io, 
-            include_as_found
+            include_as_found,
+            meta_dict
         )
 
         st.download_button(
@@ -364,17 +420,16 @@ with tab_report:
 # -----------------------------------------------------------------------------
 with tab_editor:
     st.header("Equipment & Measurement Editor")
-    st.write("Add new machinery, modify baseline specs, or edit/delete measurement rows for this session.")
+    st.write("Add new machinery, modify baseline specs, or edit/delete measurement rows.")
 
     col_a, col_b = st.columns([1, 1], gap="large")
 
     with col_a:
-        st.subheader("1. Select Machine Profile to Edit")
+        st.subheader("1. Select Machine Profile")
         edit_target = st.selectbox("Machine Profile:", list(st.session_state.equipment_configs.keys()), key="edit_target_select")
         
-        # Add New Machine Section
-        new_machine_name = st.text_input("Or Create New Machine Profile Name:")
-        if st.button("➕ Add New Machine Profile"):
+        new_machine_name = st.text_input("Create New Profile Name:")
+        if st.button("➕ Add Profile"):
             if new_machine_name and new_machine_name not in st.session_state.equipment_configs:
                 st.session_state.equipment_configs[new_machine_name] = [
                     {"label": "General Parallelism", "target": 0.010}
@@ -382,14 +437,13 @@ with tab_editor:
                 st.success(f"Added profile '{new_machine_name}'!")
                 st.rerun()
 
-        # Delete Machine Profile
         if st.button(f"🗑️ Delete Profile '{edit_target}'", type="primary"):
             if len(st.session_state.equipment_configs) > 1:
                 del st.session_state.equipment_configs[edit_target]
                 st.success(f"Deleted '{edit_target}'.")
                 st.rerun()
             else:
-                st.error("Cannot delete the last remaining machine profile!")
+                st.error("Cannot delete the last remaining profile!")
 
     with col_b:
         st.subheader(f"2. Edit Measurements for '{edit_target}'")
@@ -398,13 +452,13 @@ with tab_editor:
 
         with st.form(f"edit_form_{edit_target}"):
             for idx, item in enumerate(current_params):
-                st.markdown(f"**Measurement Point #{idx+1}**")
+                st.markdown(f"**Point #{idx+1}**")
                 c1, c2, c3 = st.columns([3, 2, 1])
                 
                 with c1:
-                    new_label = st.text_input("Parameter Description", value=item["label"], key=f"lbl_{edit_target}_{idx}")
+                    new_label = st.text_input("Description", value=item["label"], key=f"lbl_{edit_target}_{idx}")
                 with c2:
-                    new_target = st.number_input("Default Spec Limit (in)", value=float(item["target"]), step=0.001, format="%.3f", key=f"tgt_{edit_target}_{idx}")
+                    new_target = st.number_input("Spec Limit (in)", value=float(item["target"]), step=0.001, format="%.3f", key=f"tgt_{edit_target}_{idx}")
                 with c3:
                     delete_row = st.checkbox("Delete", key=f"del_{edit_target}_{idx}")
 
@@ -412,12 +466,12 @@ with tab_editor:
                     updated_params.append({"label": new_label, "target": new_target})
 
             st.markdown("---")
-            st.markdown("**Add Additional Measurement Row:**")
+            st.markdown("**Add Additional Row:**")
             add_c1, add_c2 = st.columns([3, 2])
             with add_c1:
-                add_label = st.text_input("New Parameter Label", placeholder="e.g. Bed Levelness Error", key=f"add_lbl_{edit_target}")
+                add_label = st.text_input("Label", placeholder="e.g. Bed Levelness", key=f"add_lbl_{edit_target}")
             with add_c2:
-                add_target = st.number_input("New Spec Limit (in)", value=0.010, step=0.001, format="%.3f", key=f"add_tgt_{edit_target}")
+                add_target = st.number_input("Spec Limit", value=0.010, step=0.001, format="%.3f", key=f"add_tgt_{edit_target}")
 
             if add_label:
                 updated_params.append({"label": add_label, "target": add_target})
@@ -434,7 +488,7 @@ with tab_editor:
 # -----------------------------------------------------------------------------
 with tab_merger:
     st.header("Merge Multiple Equipment Reports")
-    st.write("Upload individual PDF reports to compile them into a single deliverable package for your customer.")
+    st.write("Upload individual PDF reports to compile them into a single deliverable package.")
 
     uploaded_pdfs = st.file_uploader(
         "Upload PDF Reports", 
