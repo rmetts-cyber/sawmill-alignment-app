@@ -13,7 +13,7 @@ for pkg in ["pypdf", "reportlab", "Pillow", "google-genai"]:
 
 import streamlit as st
 from PIL import Image
-from pypdf import PdfMerger
+from pypdf import PdfWriter
 from google import genai
 
 from reportlab.lib.pagesizes import letter
@@ -73,7 +73,7 @@ if "equipment_configs" not in st.session_state:
     st.session_state.equipment_configs = DEFAULT_CONFIGS.copy()
 
 # -----------------------------------------------------------------------------
-# 2. Gemini/Gemma Diagnostic Function
+# 2. Gemini AI Diagnostic Function
 # -----------------------------------------------------------------------------
 def analyze_with_ai(equipment_name, param_data, user_notes, api_key):
     client = genai.Client(api_key=api_key)
@@ -104,7 +104,7 @@ def analyze_with_ai(equipment_name, param_data, user_notes, api_key):
     return response.text
 
 # -----------------------------------------------------------------------------
-# 3. PDF Generation with Reinstated Metadata Fields
+# 3. PDF Generation & Merger Engine
 # -----------------------------------------------------------------------------
 def generate_pdf_report(equipment_name, param_data, notes, ai_summary, logo_bytes, photo_bytes, include_as_found, meta):
     buffer = io.BytesIO()
@@ -126,7 +126,7 @@ def generate_pdf_report(equipment_name, param_data, notes, ai_summary, logo_byte
     story.append(Paragraph(f"{equipment_name} Alignment Report", title_style))
     story.append(Spacer(1, 8))
 
-    # Metadata Header Block (Made For, Made By, Equipment #)
+    # Metadata Header Block (Made For, Made By, Equipment #, Date)
     meta_data = [
         [
             Paragraph(f"<b>Report Made For:</b> {meta['made_for']}", styles['Normal']),
@@ -149,7 +149,7 @@ def generate_pdf_report(equipment_name, param_data, notes, ai_summary, logo_byte
     story.append(meta_table)
     story.append(Spacer(1, 12))
 
-    # Photo Insertion
+    # Field Photo Insertion
     if photo_bytes:
         try:
             photo_img = RLImage(photo_bytes, width=450, height=220)
@@ -210,7 +210,7 @@ def generate_pdf_report(equipment_name, param_data, notes, ai_summary, logo_byte
     story.append(t)
     story.append(Spacer(1, 14))
 
-    # Optional AI Diagnostic Section
+    # AI Diagnostic Section
     if ai_summary and ai_summary.strip():
         story.append(Paragraph("<b>AI Diagnostic Summary & Recommendations:</b>", styles['Heading3']))
         story.append(Paragraph(ai_summary.replace('\n', '<br/>'), styles['Normal']))
@@ -225,17 +225,17 @@ def generate_pdf_report(equipment_name, param_data, notes, ai_summary, logo_byte
     return buffer
 
 def merge_pdf_files(pdf_file_list):
-    merger = PdfMerger()
+    writer = PdfWriter()
     for pdf in pdf_file_list:
-        merger.append(pdf)
+        writer.append(pdf)
     merged_buffer = io.BytesIO()
-    merger.write(merged_buffer)
-    merger.close()
+    writer.write(merged_buffer)
+    writer.close()
     merged_buffer.seek(0)
     return merged_buffer
 
 # -----------------------------------------------------------------------------
-# 4. Streamlit App Layout
+# 4. Streamlit Main Interface
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="Sawmill Alignment Tool", layout="wide")
 
@@ -263,7 +263,7 @@ with tab_report:
 
     st.title("Equipment Alignment Report Builder")
     
-    # Metadata Form Header
+    # Metadata Form
     st.subheader("📋 Report Metadata")
     meta_col1, meta_col2, meta_col3, meta_col4 = st.columns(4)
     with meta_col1:
@@ -345,7 +345,7 @@ with tab_report:
             if include_as_found and item["before_val"] is not None:
                 item["before_status"] = "PASS" if item["before_val"] <= item["target"] else "FAIL"
 
-        # On-Screen HTML Table
+        # Interactive Table Output
         table_html = "<table style='width:100%; border-collapse:collapse; text-align:center; font-family:sans-serif;'>"
         table_html += "<tr style='background-color:#1A365D; color:white;'><th style='padding:10px; text-align:left;'>Parameter</th><th style='padding:10px;'>Spec Limit</th>"
         if include_as_found:
@@ -396,7 +396,7 @@ with tab_report:
         else:
             final_ai_text = ""
 
-        # PDF Download Button
+        # Export PDF Action
         pdf_file = generate_pdf_report(
             selected_equipment, 
             input_results, 
