@@ -1,7 +1,7 @@
 import io
 import streamlit as st
 from PIL import Image
-from pypdf import PdfMerger
+from pypdf import PdfWriter
 from google import genai
 
 from reportlab.lib.pagesizes import letter
@@ -193,8 +193,8 @@ def generate_pdf_report(equipment_name, param_data, notes, ai_summary, logo_byte
     return buffer
 
 def merge_pdf_files(pdf_file_list):
-    """Combines uploaded PDF reports into a single file."""
-    merger = PdfMerger()
+    """Combines uploaded PDF reports into a single file using PdfWriter."""
+    merger = PdfWriter()
     for pdf in pdf_file_list:
         merger.append(pdf)
     merged_buffer = io.BytesIO()
