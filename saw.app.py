@@ -13,7 +13,7 @@ for pkg in ["pypdf", "reportlab", "Pillow", "google-genai"]:
 
 import streamlit as st
 from PIL import Image
-from pypdf import PdfMerger
+from pypdf import PdfWriter
 from google import genai
 
 from reportlab.lib.pagesizes import letter
@@ -116,7 +116,7 @@ def analyze_with_ai(equipment_name, param_data, user_notes, api_key):
     return response.text
 
 # -----------------------------------------------------------------------------
-# 3. PDF Generation
+# 3. PDF Generation & Merging
 # -----------------------------------------------------------------------------
 def generate_pdf_report(equipment_name, param_data, notes, ai_summary, logo_bytes, photo_bytes, include_as_found, meta):
     buffer = io.BytesIO()
@@ -237,12 +237,12 @@ def generate_pdf_report(equipment_name, param_data, notes, ai_summary, logo_byte
     return buffer
 
 def merge_pdf_files(pdf_file_list):
-    merger = PdfMerger()
+    writer = PdfWriter()
     for pdf in pdf_file_list:
-        merger.append(pdf)
+        writer.append(pdf)
     merged_buffer = io.BytesIO()
-    merger.write(merged_buffer)
-    merger.close()
+    writer.write(merged_buffer)
+    writer.close()
     merged_buffer.seek(0)
     return merged_buffer
 
@@ -350,7 +350,7 @@ with tab_report:
         st.session_state.last_notes = notes
         st.session_state.last_meta = meta_dict
 
-    # Persistent Display Area (Stays visible even when interactive buttons are clicked)
+    # Persistent Display Area
     if st.session_state.evaluated:
         st.markdown("---")
         st.header("3. Tolerance Summary Table")
