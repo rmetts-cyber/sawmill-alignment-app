@@ -88,7 +88,7 @@ def analyze_with_gemma(equipment_name, param_data, user_notes, api_key):
     """
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash", 
+        model="gemini-3.5-flash", 
         contents=prompt
     )
     return response.text
