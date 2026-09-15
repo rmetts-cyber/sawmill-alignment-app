@@ -377,22 +377,34 @@ with tab_report:
         # --- AI TOGGLE & EDITABLE TEXT SECTION ---
         st.markdown("---")
         st.subheader("🤖 AI Diagnostic Summary")
-        
+
         enable_ai = st.checkbox("Include AI Diagnostics in Report", value=True)
-        
+
+        # Initialize state variable
         if "ai_text_val" not in st.session_state:
             st.session_state.ai_text_val = ""
 
-        if enable_ai and active_api_key:
-            if st.button("✨ Generate AI Analysis"):
-                with st.spinner("AI is evaluating measurements..."):
-                    try:
-                        st.session_state.ai_text_val = analyze_with_ai(selected_equipment, input_results, notes, active_api_key)
-                    except Exception as e:
-                        st.warning(f"AI analysis unavailable: {e}")
-
         if enable_ai:
-            final_ai_text = st.text_area("Review & Edit AI Analysis (Optional):", value=st.session_state.ai_text_val, height=140)
+            if active_api_key:
+                # Trigger button updates session state directly
+                if st.button("✨ Generate AI Analysis"):
+                    with st.spinner("AI is evaluating measurements..."):
+                        try:
+                            st.session_state.ai_text_val = analyze_with_ai(
+                                selected_equipment, input_results, notes, active_api_key
+                            )
+                            st.success("Analysis generated!")
+                        except Exception as e:
+                            st.error(f"AI analysis failed: {e}")
+            else:
+                st.info("Enter a Gemma API Key in the sidebar or set GEMMA_API_KEY in secrets to enable AI generation.")
+
+            # Editable text area bound directly to session state key
+            final_ai_text = st.text_area(
+                "Review & Edit AI Analysis (Optional):",
+                key="ai_text_val",
+                height=140
+            )
         else:
             final_ai_text = ""
 
